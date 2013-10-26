@@ -61,6 +61,107 @@ def lockCheckWrapper(func):
         return func(self, *args, **kw)
     return wraps(func)(wrapper)
 
+class RequestQueueItem(object):
+    __slots__ = ('prev', 'next', 'key', 'value')
+    def __init__(self, key, value):
+        self.next = self.prev = None
+        self.key = key
+        self.value = value
+
+class RequestQueue(object):
+    """
+    Request queue with efficent:
+    - access by message id
+    - access to entry with earliest timeout
+    - removal of entries by message id in arbitrary order (WTR timeout)
+    - insertion of entry past latest timeout
+
+    Insertion of entries in arbitrary order (WTR timeout) is inefficient, but
+    unlikely (timeout offset being constant and entries being inserted
+    chronologically).
+
+    Not thread-safe.
+    """
+    # Implementation notes:
+    # A dequeue would not do, as inner elements cannot be added/removed.
+    # A dict would not do (no efficient earliest access), neither would
+    # OrderedDict as timeout order is not insertion order.
+    # A list alone would not do (no efficient access to element by message id,
+    # O(n) insertion performance).
+    # A chained list is inefficient for random insertion because bisecting
+    # it is O(n), but insertion and append ate efficient.
+    # Append being the most likely insertion case, use a double-chained list
+    # with head and tail accessible and index it with a dict.
+    __slots__ = ('_dict', '_head', '_tail')
+
+    def __init__(self):
+        self._dict = {}
+        self._head = self._tail = None
+
+    def __nonzero__(self):
+        # O(1)
+        return bool(self._dict)
+
+    def __setitem__(self, msg_id, value):
+        # O(log(n))
+        assert msg_id not in self._dict, "Packet id already expected"
+        item = RequestQueueItem(msg_id, value)
+        prev = self._tail
+        if prev is None:
+            # O(1)
+            self._head = self._tail = item
+        else:
+            # O(n), but likely to be actually O(1) as item is likely to be
+            # appended.
+            while prev.value[1] > value[1]:
+                if prev.prev is None:
+                    item.next = self._head
+                    self._head.prev = item
+                    self._head = item
+                    break
+                prev = prev.prev
+            else:
+                # O(1)
+                if prev is self._tail:
+                    self._tail = item
+                else:
+                    item.next = prev.next
+                    item.next.prev = item
+                item.prev = prev
+                prev.next = item
+        # O(log(n))
+        self._dict[msg_id] = item
+
+    def _pop(self, item):
+        # O(1)
+        if item.prev is not None:
+            item.prev.next = item.next
+        if item.next is not None:
+            item.next.prev = item.prev
+        if item is self._head:
+            self._head = item.next
+        if item is self._tail:
+            self._tail = item.prev
+
+    def pop(self, msg_id):
+        # O(log(n))
+        item = self._dict.pop(msg_id)
+        self._pop(item)
+        return item.value
+
+    def popitem(self):
+        # O(log(n))
+        msg_id, item = self._dict.popitem()
+        self._pop(item)
+        return (msg_id, item.value)
+
+    def getNextTimeoutItem(self):
+        # O(1)
+        head = self._head
+        if head is None:
+            return None, (None, None, None, None)
+        return head.key, head.value
+
 class HandlerSwitcher(object):
     _next_timeout = None
     _next_timeout_msg_id = None
@@ -118,7 +219,6 @@ class HandlerSwitcher(object):
         msg_id = request.getId()
         answer_class = request.getAnswerClass()
         assert answer_class is not None, "Not a request"
-        assert msg_id not in request_dict, "Packet id already expected"
         next_timeout = self._next_timeout
         if next_timeout is None or timeout < next_timeout:
             self._next_timeout = timeout
@@ -188,9 +288,9 @@ class HandlerSwitcher(object):
         # Find next timeout and its msg_id
         next_timeout = None
         for pending in self._pending:
-            for msg_id, (_, timeout, on_timeout, _) in pending[0].iteritems():
-                if not next_timeout or timeout < next_timeout[0]:
-                    next_timeout = timeout, msg_id, on_timeout
+            msg_id, (_, timeout, on_timeout, _) = pending[0].getNextTimeoutItem()
+            if msg_id and (not next_timeout or timeout < next_timeout[0]):
+                next_timeout = timeout, msg_id, on_timeout
         self._next_timeout, self._next_timeout_msg_id, self._next_on_timeout = \
             next_timeout or (None, None, None)
 
@@ -201,7 +301,7 @@ class HandlerSwitcher(object):
             self._pending[0][1] = handler
         else:
             # put the next handler in queue
-            self._pending.append([{}, handler])
+            self._pending.append([RequestQueue(), handler])
         return can_apply
 
 
