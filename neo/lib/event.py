@@ -20,6 +20,8 @@ from errno import EINTR, EAGAIN
 from . import logging
 from .profiling import profiler_decorator
 
+TIMEOUT_CHECK_PERIOD = 1
+
 class EpollEventManager(object):
     """This class manages connections and events based on epoll(5)."""
 
@@ -29,6 +31,7 @@ class EpollEventManager(object):
         self.writer_set = set()
         self.epoll = epoll()
         self._pending_processing = []
+        self._next_timeout_check = 0
 
     def close(self):
         for c in self.connection_dict.values():
@@ -163,12 +166,14 @@ class EpollEventManager(object):
                 self._addPendingConnection(conn)
 
         t = time()
-        for conn in self.connection_dict.values():
-            conn.lock()
-            try:
-                conn.checkTimeout(t)
-            finally:
-                conn.unlock()
+        if t >= self._next_timeout_check:
+            self._next_timeout_check = t + TIMEOUT_CHECK_PERIOD
+            for conn in self.connection_dict.values():
+                conn.lock()
+                try:
+                    conn.checkTimeout(t)
+                finally:
+                    conn.unlock()
 
     def addReader(self, conn):
         connector = conn.getConnector()
