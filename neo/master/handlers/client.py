@@ -59,9 +59,8 @@ class ClientServiceHandler(MasterHandler):
 
         # Collect partitions related to this transaction.
         getPartition = app.pt.getPartition
-        partition_set = set()
+        partition_set = set((getPartition(oid) for oid in oid_list))
         partition_set.add(getPartition(ttid))
-        partition_set.update((getPartition(oid) for oid in oid_list))
 
         # Collect the UUIDs of nodes related to this transaction.
         uuid_set = set()
