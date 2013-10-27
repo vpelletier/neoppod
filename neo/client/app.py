@@ -181,6 +181,7 @@ class Application(object):
                 break
             if packet is None or isinstance(packet, ForgottenPacket):
                 # connection was closed or some packet was forgotten
+                onError(conn, packet)
                 continue
             block = False
             try:
@@ -687,24 +688,32 @@ class Application(object):
 
         ttid = txn_context['ttid']
         # Store data on each node
-        txn_stored_counter = 0
         assert not txn_context['data_dict'], txn_context
         packet = Packets.AskStoreTransaction(ttid, str(transaction.user),
             str(transaction.description), dumps(transaction._extension),
             txn_context['cache_dict'])
+        node_address_set = set()
+        add_node_address = node_address_set.add
         add_involved_nodes = txn_context['involved_nodes'].add
+        queue = self._getThreadQueue()
         for node, conn in self.cp.iterateForObject(ttid):
             logging.debug("voting transaction %s on %s", dump(ttid),
                 dump(conn.getUUID()))
             try:
-                self._askStorage(conn, packet)
+                conn.ask(packet, queue=queue)
             except ConnectionClosed:
                 continue
             add_involved_nodes(node)
-            txn_stored_counter += 1
+            add_node_address(node.getAddress())
+        self._waitAnyMessage(
+            queue,
+            onError=(
+                lambda conn, _: node_address_set.remove(conn.getAddress())
+            ),
+        )
 
         # check at least one storage node accepted
-        if txn_stored_counter == 0:
+        if not node_address_set:
             logging.error('tpc_vote failed')
             raise NEOStorageError('tpc_vote failed')
         # Check if master connection is still alive.
