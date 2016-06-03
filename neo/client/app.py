@@ -331,6 +331,13 @@ class Application(ThreadedApplication):
         # TODO:
         # - rename parameters (here? and in handlers & packet definitions)
 
+        # When not bound to a ZODB Connection, load() may be the
+        # first method called and last_tid may still be None.
+        # This happens, for example, when opening the DB.
+        if not (tid or before_tid) and self.last_tid:
+            # Do not get something more recent than the last invalidation
+            # we got from master.
+            before_tid = p64(u64(self.last_tid) + 1)
         acquire = self._cache_lock_acquire
         release = self._cache_lock_release
         # XXX: Consider using a more fine-grained lock.
@@ -344,13 +351,6 @@ class Application(ThreadedApplication):
                 self._loading_oid = oid
             finally:
                 release()
-            # When not bound to a ZODB Connection, load() may be the
-            # first method called and last_tid may still be None.
-            # This happens, for example, when opening the DB.
-            if not (tid or before_tid) and self.last_tid:
-                # Do not get something more recent than the last invalidation
-                # we got from master.
-                before_tid = p64(u64(self.last_tid) + 1)
             data, tid, next_tid, _ = self._loadFromStorage(oid, tid, before_tid)
             acquire()
             try:
