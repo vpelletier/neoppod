@@ -18,12 +18,13 @@ from Queue import Empty
   This file defines a VerboseLock class implementing basic lock API and
   logging in appropriate places with extensive details.
 
-  It can be globaly toggled by changing VERBOSE_LOCKING value.
+  It can be globaly toggled by setting NEO_VERBOSE_LOCKING environment variable
+  to a non-empty value before this module is loaded.
   There is no overhead at all when disabled (passthrough to threading
   classes).
 """
 
-VERBOSE_LOCKING = False
+VERBOSE_LOCKING = bool(os.getenv('NEO_VERBOSE_LOCKING'))
 
 
 class LockUser(object):
