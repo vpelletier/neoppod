@@ -98,7 +98,7 @@ class StorageAnswersHandler(AnswerBaseHandler):
                         size = len(data)
                         txn_context['data_size'] -= size
                         size += txn_context['cache_size']
-                        if size < self.app._cache._max_size:
+                        if size < self.app.getCacheMaxSize():
                             txn_context['cache_size'] = size
                         else:
                             # Do not cache data past cache max size, as it

@@ -100,45 +100,10 @@ class PrimaryNotificationsHandler(MTEventHandler):
             ltid = packet.decode()[0]
             if app.last_tid != ltid:
                 if app.master_conn is None:
-                    app._cache_lock_acquire()
-                    try:
-                        if app.last_tid < ltid:
-                            app._cache.clear_current()
-                            # In the past, we tried not to invalidate the
-                            # Connection caches entirely, using the list of
-                            # oids that are invalidated by clear_current.
-                            # This was wrong because these caches may have
-                            # entries that are not in the NEO cache anymore.
-                        else:
-                            # The DB was truncated. It happens so
-                            # rarely that we don't need to optimize.
-                            app._cache.clear()
-                        # Make sure a parallel load won't refill the cache
-                        # with garbage.
-                        app._loading_oid = app._loading_invalidated = None
-                    finally:
-                        app._cache_lock_release()
-                    db = app.getDB()
-                    db is None or db.invalidateCache()
+                    app.recoverFromMissedInvalidations(ltid)
                 app.last_tid = ltid
         elif type(packet) is Packets.AnswerTransactionFinished:
-            app = self.app
-            app.last_tid = tid = packet.decode()[1]
-            callback = kw.pop('callback')
-            object_base_serial_dict = kw.pop('object_base_serial_dict')
-            # Update cache
-            cache = app._cache
-            app._cache_lock_acquire()
-            try:
-                for oid, data in kw.pop('cache_dict').iteritems():
-                    # Update ex-latest value in cache
-                    cache.invalidate(oid, tid, object_base_serial_dict[oid])
-                    if data is not None:
-                        # Store in cache with no next_tid
-                        cache.store(oid, data, tid, None)
-                callback(tid)
-            finally:
-                app._cache_lock_release()
+            self.app.updateCacheOnFinish(tid, **kw)
         MTEventHandler.packetReceived(self, conn, packet, kw)
 
     def connectionClosed(self, conn):
@@ -156,22 +121,7 @@ class PrimaryNotificationsHandler(MTEventHandler):
         logging.critical("master node ask to stop operation")
 
     def invalidateObjects(self, conn, tid, oid_dict):
-        app = self.app
-        app.last_tid = tid
-        app._cache_lock_acquire()
-        try:
-            invalidate = app._cache.invalidate
-            loading = app._loading_oid
-            for oid, base_tid in oid_dict.iteritems():
-                invalidate(oid, tid, base_tid)
-                if oid == loading:
-                    app._loading_oid = None
-                    app._loading_invalidated = tid
-            db = app.getDB()
-            if db is not None:
-                db.invalidate(tid, oid_dict.keys())
-        finally:
-            app._cache_lock_release()
+        self.app.invalidateObjects(tid, oid_dict)
 
     def notifyPartitionChanges(self, conn, ptid, cell_list):
         if self.app.pt.filled():
