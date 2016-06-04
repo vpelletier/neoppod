@@ -870,7 +870,7 @@ class Test(NEOThreadedTest):
             with cluster.master.filterConnection(cluster.client) as m2c:
                 m2c.add(lambda conn, packet:
                     isinstance(packet, Packets.InvalidateObjects))
-                tid = client.tpc_finish(txn, None)
+                tid = client.tpc_finish(txn, None, lambda tid: None)
                 # Change to x is committed. Testing connection must ask the
                 # storage node to return original value of x, even if we
                 # haven't processed yet any invalidation for x.
@@ -904,7 +904,7 @@ class Test(NEOThreadedTest):
                 txn = transaction.Transaction()
                 client.tpc_begin(txn)
                 client.store(x2._p_oid, tid, x, '', txn) # value=0
-                tid = client.tpc_finish(txn, None)
+                tid = client.tpc_finish(txn, None, lambda tid: None)
                 t1.begin() # make sure invalidation is processed
                 # Resume processing of answer from storage. An entry should be
                 # added in cache for x=1 with a fixed next_tid (i.e. not None)
@@ -927,7 +927,7 @@ class Test(NEOThreadedTest):
                 txn = transaction.Transaction()
                 client.tpc_begin(txn)
                 client.store(x2._p_oid, tid, y, '', txn)
-                tid = client.tpc_finish(txn, None)
+                tid = client.tpc_finish(txn, None, lambda tid: None)
                 client.close()
             t.join()
             # A transaction really begins when it acquires the lock to flush
@@ -1007,7 +1007,7 @@ class Test(NEOThreadedTest):
             txn = transaction.Transaction()
             client.tpc_begin(txn)
             client.store(x1._p_oid, x1._p_serial, y, '', txn)
-            tid = client.tpc_finish(txn, None)
+            tid = client.tpc_finish(txn, None, lambda tid: None)
             client.close()
             self.tic()
 
@@ -1034,7 +1034,7 @@ class Test(NEOThreadedTest):
             txn_context = client._txn_container.get(txn)
             txn_context['ttid'] = add64(txn_context['ttid'], 1)
             self.assertRaises(POSException.StorageError,
-                              client.tpc_finish, txn, None)
+                client.tpc_finish, txn, None, lambda tid: None)
         finally:
             cluster.stop()
 

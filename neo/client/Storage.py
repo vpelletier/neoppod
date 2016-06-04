@@ -99,8 +99,8 @@ class Storage(BaseStorage.BaseStorage,
     def tpc_abort(self, transaction):
         return self.app.tpc_abort(transaction)
 
-    def tpc_finish(self, transaction, f=None):
-        return self.app.tpc_finish(transaction, self.tryToResolveConflict, f)
+    def tpc_finish(self, transaction, func=lambda tid: None):
+        return self.app.tpc_finish(transaction, self.tryToResolveConflict, func)
 
     def store(self, oid, serial, data, version, transaction):
         assert version == '', 'Versions are not supported'

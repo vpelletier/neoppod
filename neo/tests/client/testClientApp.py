@@ -475,7 +475,7 @@ class ClientApplicationTests(NeoUnitTestBase):
         app = self.getApp()
         txn = self.makeTransactionObject()
         app.master_conn = Mock()
-        self.assertRaises(StorageTransactionError, app.tpc_finish, txn, None)
+        self.assertRaises(StorageTransactionError, app.tpc_finish, txn, None, lambda tid: None)
         # no packet sent
         self.checkNoPacketSent(app.master_conn)
 
@@ -496,7 +496,7 @@ class ClientApplicationTests(NeoUnitTestBase):
             'fakeReceived': packet,
         })
         txn_context['voted'] = None
-        app.tpc_finish(txn, None)
+        app.tpc_finish(txn, None, lambda tid: None)
         self.checkAskFinishTransaction(app.master_conn)
         #self.checkDispatcherRegisterCalled(app, app.master_conn)
         self.assertRaises(StorageTransactionError, app._txn_container.get, txn)

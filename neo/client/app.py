@@ -683,7 +683,7 @@ class Application(ThreadedApplication):
         # instance).
         self.dispatcher.forget_queue(txn_context['queue'], flush_queue=False)
 
-    def tpc_finish(self, transaction, tryToResolveConflict, f=None):
+    def tpc_finish(self, transaction, tryToResolveConflict, callback):
         """Finish current transaction
 
         To avoid inconsistencies between several databases involved in the
@@ -716,7 +716,7 @@ class Application(ThreadedApplication):
             ttid = txn_context['ttid']
             p = Packets.AskFinishTransaction(ttid, cache_dict, checked_list)
             try:
-                tid = self._askPrimary(p, cache_dict=cache_dict, callback=f)
+                tid = self._askPrimary(p, cache_dict=cache_dict, callback=callback)
                 assert tid
             except ConnectionClosed:
                 tid = self._getFinalTID(ttid)
@@ -947,6 +947,7 @@ class Application(ThreadedApplication):
         #       still be required for partial import).
         if preindex is None:
             preindex = {}
+        noop = lambda tid: None
         for transaction in source.iterator(start, stop):
             tid = transaction.tid
             self.tpc_begin(transaction, tid, transaction.status)
@@ -957,7 +958,7 @@ class Application(ThreadedApplication):
                 preindex[oid] = tid
             conflicted = self.tpc_vote(transaction, tryToResolveConflict)
             assert not conflicted, conflicted
-            real_tid = self.tpc_finish(transaction, tryToResolveConflict)
+            real_tid = self.tpc_finish(transaction, tryToResolveConflict, noop)
             assert real_tid == tid, (real_tid, tid)
 
     from .iterator import iterator

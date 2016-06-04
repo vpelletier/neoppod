@@ -135,8 +135,7 @@ class PrimaryNotificationsHandler(MTEventHandler):
                     if data is not None:
                         # Store in cache with no next_tid
                         cache.store(oid, data, tid, None)
-                if callback is not None:
-                    callback(tid)
+                callback(tid)
             finally:
                 app._cache_lock_release()
         MTEventHandler.packetReceived(self, conn, packet, kw)
