@@ -212,3 +212,63 @@ class SimpleQueue(object):
 
     def empty(self):
         return not self._queue
+
+class _SharedLockBaseLock(object):
+    def __init__(self, condition, counter):
+        self._condition = condition
+        self._counter = counter
+
+    def __enter__(self):
+        self.acquire()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.release()
+
+    @staticmethod
+    def acquire(*args, **kw):
+        raise NotImplementedError
+
+    @staticmethod
+    def release():
+        raise NotImplementedError
+
+class _SharedLockCounter(object):
+    def __init__(self):
+        self._value = 0
+
+    def inc(self):
+        self._value += 1
+
+    def dec(self):
+        assert self._value
+        self._value -= 1
+        return not self._value
+
+    def __nonzero__(self):
+        return bool(self._value)
+
+class _SharedLockWriter(_SharedLockBaseLock):
+    def acquire(self, timeout=None):
+        self._condition.acquire()
+        while self._counter:
+            self._condition.wait(timeout=timeout)
+
+    def release(self):
+        self._condition.release()
+
+class _SharedLockReader(_SharedLockBaseLock):
+    def acquire(self):
+        with self._condition:
+            self._counter.inc()
+
+    def release(self):
+        with self._condition:
+            if self._counter.dec():
+                self._condition.notify()
+
+class SharedLock(object):
+    def __init__(self, lock=None):
+        condition = Condition(RLock() if lock is None else lock)
+        reader_count = _SharedLockCounter()
+        self.read = _SharedLockReader(condition, reader_count)
+        self.write = _SharedLockWriter(condition, reader_count)
