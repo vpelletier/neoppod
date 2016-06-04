@@ -448,6 +448,7 @@ class Application(ThreadedApplication):
         txn_context['data_dict'][oid] = data
         # Store data on each node
         txn_context['object_stored_counter_dict'][oid] = {}
+        serial = serial or ZERO_TID
         txn_context['object_base_serial_dict'].setdefault(oid, serial)
         txn_context['object_serial_dict'][oid] = serial
         queue = txn_context['queue']
