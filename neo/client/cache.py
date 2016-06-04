@@ -168,24 +168,31 @@ class ClientCache(object):
                     self._oid_dict[head.oid].remove(head)
                 break
 
-    def _load(self, oid, before_tid=None):
+    def _load(self, oid, tid, before):
         item_list = self._oid_dict.get(oid)
         if item_list:
-            if before_tid:
-                for item in reversed(item_list):
-                    if item.tid < before_tid:
-                        next_tid = item.next_tid
-                        if next_tid and next_tid < before_tid:
-                            break
-                        return item
+            if tid:
+                if before:
+                    for item in reversed(item_list):
+                        if item.tid < tid:
+                            next_tid = item.next_tid
+                            if next_tid and next_tid < tid:
+                                return
+                            return item
+                else:
+                    for item in reversed(item_list):
+                        if item.tid == tid:
+                            return item
+                        if item.tid < tid:
+                            return
             else:
                 item = item_list[-1]
                 if not item.next_tid:
                     return item
 
-    def load(self, oid, before_tid=None):
+    def load(self, oid, tid, before):
         """Return a revision of oid that was current before given tid"""
-        item = self._load(oid, before_tid)
+        item = self._load(oid, tid, before)
         if item:
             data = item.data
             if data is not None:
@@ -197,13 +204,12 @@ class ClientCache(object):
         size = len(data)
         max_size = self._max_size
         if size < max_size:
-            item = self._load(oid, next_tid)
-            if item:
+            item = self._load(oid, next_tid, True)
+            if item and item.tid == tid:
                 # We don't handle late invalidations for cached oids, because
                 # the caller is not supposed to explicitely asks for tids after
                 # app.last_tid (and the cache should be empty when app.last_tid
                 # is still None).
-                assert item.tid == tid, (item, tid)
                 if item.level: # already stored
                     assert item.next_tid == next_tid and item.data == data
                     return
@@ -285,24 +291,26 @@ class ClientCache(object):
 def test(self):
     cache = ClientCache()
     repr(cache)
-    self.assertEqual(cache.load(1, 10), None)
-    self.assertEqual(cache.load(1, None), None)
+    self.assertEqual(cache.load(1, 10, True), None)
+    self.assertEqual(cache.load(1, 10, False), None)
+    self.assertEqual(cache.load(1, None, False), None)
     cache.invalidate(1, 10, 9)
     data = '5', 5, 10
     # 2 identical stores happens if 2 threads got a cache miss at the same time
     cache.store(1, *data)
     cache.store(1, *data)
-    self.assertEqual(cache.load(1, 10), data)
-    self.assertEqual(cache.load(1, None), None)
+    self.assertEqual(cache.load(1, 10, True), data)
+    self.assertEqual(cache.load(1, 11, True), None)
+    self.assertEqual(cache.load(1, None, False), None)
     data = '15', 15, None
     cache.store(1, *data)
-    self.assertEqual(cache.load(1, None), data)
+    self.assertEqual(cache.load(1, None, False), data)
     cache.clear_current()
-    self.assertEqual(cache.load(1, None), None)
+    self.assertEqual(cache.load(1, None, False), None)
     cache.store(1, *data)
     cache.invalidate(1, 20, 15)
     cache.clear_current()
-    self.assertEqual(cache.load(1, 20), ('15', 15, 20))
+    self.assertEqual(cache.load(1, 20, True), ('15', 15, 20))
     cache.store(1, '10', 10, 15)
     cache.store(1, '20', 20, 21)
     self.assertEqual([5, 10, 15, 20], [x.tid for x in cache._oid_dict[1]])
@@ -316,7 +324,7 @@ def test(self):
     self.assertEqual(cache._queue_list[0].oid, 1)
     data = '10', 10, 15
     cache.store(1, *data)
-    self.assertEqual(cache.load(1, 15), data)
+    self.assertEqual(cache.load(1, 15, True), data)
     self.assertEqual(1, cache._history_size)
     cache.clear_current()
     self.assertEqual(0, cache._history_size)

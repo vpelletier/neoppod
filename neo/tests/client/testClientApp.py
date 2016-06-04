@@ -218,7 +218,7 @@ class ClientApplicationTests(NeoUnitTestBase):
         self.assertEqual(r1, app.load(oid, None, tid2))
         self.checkAskObject(conn)
         for t in tid2, tid3:
-            self.assertEqual(cache._load(oid, t).tid, tid1)
+            self.assertEqual(cache._load(oid, t, True).tid, tid1)
         self.assertEqual(r1, app.load(oid, tid1))
         self.assertEqual(r1, app.load(oid, None, tid3))
         self.assertRaises(StandardError, app.load, oid, tid2)

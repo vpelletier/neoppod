@@ -345,7 +345,7 @@ class Application(ThreadedApplication):
         try:
             acquire()
             try:
-                result = self._loadFromCache(oid, tid, before_tid)
+                result = self._cache.load(oid, tid or before_tid, bool(before_tid))
                 if result:
                     return result
                 self._loading_oid = oid
@@ -387,16 +387,6 @@ class Application(ThreadedApplication):
                         tid, next_tid, data_tid)
             raise NEOStorageCreationUndoneError(dump(oid))
         raise NEOStorageError("storage down or corrupted data")
-
-    def _loadFromCache(self, oid, at_tid=None, before_tid=None):
-        """
-        Load from local cache, return None if not found.
-        """
-        if at_tid:
-            result = self._cache.load(oid, at_tid + '*')
-            assert not result or result[1] == at_tid
-            return result
-        return self._cache.load(oid, before_tid)
 
     def tpc_begin(self, transaction, tid=None, status=' '):
         """Begin a new transaction."""
