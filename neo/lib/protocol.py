@@ -656,6 +656,10 @@ PFOidList = PList('oid_list',
     POID('oid'),
 )
 
+PFOidDict = PDict('oid_tid_dict',
+    POID('oid'),
+    PTID('tid'),
+)
 # packets definition
 
 class Notify(Packet):
@@ -915,6 +919,7 @@ class LockInformation(Packet):
 
     _answer = PStruct('answer_information_locked',
         PTID('ttid'),
+        PFOidDict,
     )
 
 class InvalidateObjects(Packet):
@@ -923,7 +928,7 @@ class InvalidateObjects(Packet):
     """
     _fmt = PStruct('ask_finish_transaction',
         PTID('tid'),
-        PFOidList,
+        PFOidDict,
     )
 
 class UnlockInformation(Packet):

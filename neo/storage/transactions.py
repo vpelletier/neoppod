@@ -93,12 +93,12 @@ class Transaction(object):
     def isLocked(self):
         return self._locked
 
-    def addObject(self, oid, data_id, value_serial):
+    def addObject(self, oid, data_id, value_serial, previous_serial):
         """
             Add an object to the transaction
         """
         assert oid not in self._checked_set, dump(oid)
-        self._object_dict[oid] = oid, data_id, value_serial
+        self._object_dict[oid] = oid, data_id, value_serial, previous_serial
 
     def delObject(self, oid):
         try:
@@ -107,10 +107,10 @@ class Transaction(object):
             self._checked_set.remove(oid)
 
     def getObject(self, oid):
-        return self._object_dict[oid]
+        return self._object_dict[oid][:3]
 
     def getObjectList(self):
-        return self._object_dict.values()
+        return [x[:3] for x in self._object_dict.itervalues()]
 
     def getOIDList(self):
         return self._object_dict.keys()
@@ -118,6 +118,11 @@ class Transaction(object):
     def getLockedOIDList(self):
         return self._object_dict.keys() + list(self._checked_set)
 
+    def getPreviousSerialDict(self):
+        return {
+            oid: previous_serial
+            for oid, (_, _, _, previous_serial) in self._object_dict.iteritems()
+        }
 
 class TransactionManager(object):
     """
@@ -195,6 +200,7 @@ class TransactionManager(object):
         if transaction.has_trans:
             self._app.dm.lockTransaction(tid, ttid)
         transaction.setTID(tid)
+        return transaction.getPreviousSerialDict()
 
     def unlock(self, ttid):
         """
@@ -275,6 +281,7 @@ class TransactionManager(object):
             raise ConflictError(previous_serial)
         logging.debug('Transaction %s storing %s', dump(ttid), dump(oid))
         self._store_lock_dict[oid] = ttid
+        return previous_serial
 
     def checkCurrentSerial(self, ttid, serial, oid):
         try:
@@ -293,13 +300,13 @@ class TransactionManager(object):
             transaction = self._transaction_dict[ttid]
         except KeyError:
             raise NotRegisteredError
-        self.lockObject(ttid, serial, oid, unlock=unlock)
+        previous_serial = self.lockObject(ttid, serial, oid, unlock=unlock)
         # store object
         if data is None:
             data_id = None
         else:
             data_id = self._app.dm.holdData(checksum, data, compression)
-        transaction.addObject(oid, data_id, value_serial)
+        transaction.addObject(oid, data_id, value_serial, previous_serial)
 
     def abort(self, ttid, even_if_locked=False):
         """
@@ -389,4 +396,4 @@ class TransactionManager(object):
                     data_id = None
                 else:
                     self._app.dm.holdData(data_id)
-                transaction.addObject(oid, data_id, new_serial)
+                transaction.addObject(oid, data_id, new_serial, None)

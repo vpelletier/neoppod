@@ -717,7 +717,8 @@ class Application(ThreadedApplication):
             ttid = txn_context['ttid']
             p = Packets.AskFinishTransaction(ttid, cache_dict, checked_list)
             try:
-                tid = self._askPrimary(p, cache_dict=cache_dict, callback=callback)
+                tid = self._askPrimary(p, cache_dict=cache_dict, callback=callback,
+                    object_base_serial_dict=txn_context['object_base_serial_dict'])
                 assert tid
             except ConnectionClosed:
                 tid = self._getFinalTID(ttid)

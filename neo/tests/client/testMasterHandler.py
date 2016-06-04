@@ -125,16 +125,18 @@ class MasterNotificationsHandlerTests(MasterHandlerTests):
 
     def test_invalidateObjects(self):
         conn = self.getFakeConnection()
+        base_tid1 = self.getNextTID()
+        base_tid2 = self.getNextTID()
         tid = self.getNextTID()
         oid1, oid2, oid3 = self.getOID(1), self.getOID(2), self.getOID(3)
         self.app._cache = Mock({
             'invalidate': None,
         })
-        self.handler.invalidateObjects(conn, tid, [oid1, oid3])
+        self.handler.invalidateObjects(conn, tid, {oid1: base_tid1, oid3: base_tid2})
         cache_calls = self.app._cache.mockGetNamedCalls('invalidate')
         self.assertEqual(len(cache_calls), 2)
-        cache_calls[0].checkArgs(oid1, tid)
-        cache_calls[1].checkArgs(oid3, tid)
+        cache_calls[0].checkArgs(oid1, tid, base_tid1)
+        cache_calls[1].checkArgs(oid3, tid, base_tid2)
         invalidation_calls = self.db.mockGetNamedCalls('invalidate')
         self.assertEqual(len(invalidation_calls), 1)
         invalidation_calls[0].checkArgs(tid, [oid1, oid3])

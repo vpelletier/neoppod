@@ -44,9 +44,9 @@ class BackupHandler(EventHandler):
         else: # upstream DB is empty
             assert app.app.getLastTransaction() == tid
 
-    def invalidateObjects(self, conn, tid, oid_list):
+    def invalidateObjects(self, conn, tid, oid_dict):
         app = self.app
         getPartition = app.app.pt.getPartition
-        partition_set = set(map(getPartition, oid_list))
+        partition_set = set(map(getPartition, oid_dict))
         partition_set.add(getPartition(tid))
         app.invalidatePartitions(tid, partition_set)

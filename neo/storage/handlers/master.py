@@ -51,8 +51,10 @@ class MasterOperationHandler(BaseMasterHandler):
         app.replicator.notifyPartitionChanges(cell_list)
 
     def askLockInformation(self, conn, ttid, tid):
-        self.app.tm.lock(ttid, tid)
-        conn.answer(Packets.AnswerInformationLocked(ttid))
+        conn.answer(Packets.AnswerInformationLocked(
+            ttid,
+            self.app.tm.lock(ttid, tid),
+        ))
 
     def notifyUnlockInformation(self, conn, ttid):
         self.app.tm.unlock(ttid)

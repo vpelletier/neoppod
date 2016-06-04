@@ -60,8 +60,8 @@ class StorageServiceHandler(BaseServiceHandler):
         p = Packets.AnswerUnfinishedTransactions(last_tid, pending_list)
         conn.answer(p)
 
-    def answerInformationLocked(self, conn, ttid):
-        self.app.tm.lock(ttid, conn.getUUID())
+    def answerInformationLocked(self, conn, ttid, oid_base_tid_dict):
+        self.app.tm.lock(ttid, conn.getUUID(), oid_base_tid_dict)
 
     def notifyPartitionCorrupted(self, conn, partition, cell_list):
         change_list = []

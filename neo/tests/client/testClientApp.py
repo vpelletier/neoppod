@@ -231,7 +231,7 @@ class ClientApplicationTests(NeoUnitTestBase):
         self.assertEqual(r2, app.load(oid))
         self.assertEqual(r2, app.load(oid, tid3))
 
-        cache.invalidate(oid, tid4)
+        cache.invalidate(oid, tid4, tid3)
         self.assertRaises(StopIteration, app.load, oid)
         self.checkAskObject(conn)
         self.assertEqual(len(cache._oid_dict[oid]), 2)

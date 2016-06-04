@@ -125,13 +125,14 @@ class PrimaryNotificationsHandler(MTEventHandler):
             app = self.app
             app.last_tid = tid = packet.decode()[1]
             callback = kw.pop('callback')
+            object_base_serial_dict = kw.pop('object_base_serial_dict')
             # Update cache
             cache = app._cache
             app._cache_lock_acquire()
             try:
                 for oid, data in kw.pop('cache_dict').iteritems():
                     # Update ex-latest value in cache
-                    cache.invalidate(oid, tid)
+                    cache.invalidate(oid, tid, object_base_serial_dict[oid])
                     if data is not None:
                         # Store in cache with no next_tid
                         cache.store(oid, data, tid, None)
@@ -154,21 +155,21 @@ class PrimaryNotificationsHandler(MTEventHandler):
     def stopOperation(self, conn):
         logging.critical("master node ask to stop operation")
 
-    def invalidateObjects(self, conn, tid, oid_list):
+    def invalidateObjects(self, conn, tid, oid_dict):
         app = self.app
         app.last_tid = tid
         app._cache_lock_acquire()
         try:
             invalidate = app._cache.invalidate
             loading = app._loading_oid
-            for oid in oid_list:
-                invalidate(oid, tid)
+            for oid, base_tid in oid_dict.iteritems():
+                invalidate(oid, tid, base_tid)
                 if oid == loading:
                     app._loading_oid = None
                     app._loading_invalidated = tid
             db = app.getDB()
             if db is not None:
-                db.invalidate(tid, oid_list)
+                db.invalidate(tid, oid_dict.keys())
         finally:
             app._cache_lock_release()
 

@@ -252,7 +252,7 @@ class ClientCache(object):
                             return
                         head = next
 
-    def invalidate(self, oid, tid):
+    def invalidate(self, oid, tid, base_tid):
         """Mark data record as being valid only up to given tid"""
         try:
             item = self._oid_dict[oid][-1]
@@ -260,6 +260,10 @@ class ClientCache(object):
             pass
         else:
             if item.next_tid is None:
+                assert base_tid == item.tid, (
+                    base_tid,
+                    item.tid,
+                )
                 item.next_tid = tid
             else:
                 assert item.next_tid <= tid, (item, oid, tid)
@@ -283,7 +287,7 @@ def test(self):
     repr(cache)
     self.assertEqual(cache.load(1, 10), None)
     self.assertEqual(cache.load(1, None), None)
-    cache.invalidate(1, 10)
+    cache.invalidate(1, 10, 9)
     data = '5', 5, 10
     # 2 identical stores happens if 2 threads got a cache miss at the same time
     cache.store(1, *data)
@@ -296,7 +300,7 @@ def test(self):
     cache.clear_current()
     self.assertEqual(cache.load(1, None), None)
     cache.store(1, *data)
-    cache.invalidate(1, 20)
+    cache.invalidate(1, 20, 15)
     cache.clear_current()
     self.assertEqual(cache.load(1, 20), ('15', 15, 20))
     cache.store(1, '10', 10, 15)

@@ -139,7 +139,7 @@ class MasterClientHandlerTests(NeoUnitTestBase):
         txn = self.app.tm[ttid]
         pending_ttid = list(self.app.tm.registerForNotification(storage_uuid))[0]
         self.assertEqual(ttid, pending_ttid)
-        self.assertEqual(len(txn.getOIDList()), 0)
+        self.assertEqual(len(txn.getOIDDict()), 0)
         self.assertEqual(len(txn.getUUIDList()), 1)
 
     def test_askNodeInformations(self):

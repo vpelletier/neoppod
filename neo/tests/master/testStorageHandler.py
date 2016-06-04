@@ -77,7 +77,7 @@ class MasterStorageHandlerTests(NeoUnitTestBase):
         self.assertTrue(tid1 < tid2)
         node, conn = self.identifyToMasterNode()
         self.checkProtocolErrorRaised(self.service.answerInformationLocked,
-                conn, tid2)
+                conn, tid2, {})
         self.checkNoPacketSent(conn)
 
     def test_answerInformationLocked_2(self):
@@ -94,21 +94,23 @@ class MasterStorageHandlerTests(NeoUnitTestBase):
         storage_1, storage_conn_1 = self._getStorage()
         storage_2, storage_conn_2 = self._getStorage()
         uuid_list = storage_1.getUUID(), storage_2.getUUID()
-        oid_list = self.getOID(), self.getOID()
+        oid1 = self.getOID()
+        oid2 = self.getOID()
+        base_tid = self.getNextTID()
         msg_id = 1
         # register a transaction
         ttid = self.app.tm.begin(client_1)
-        tid = self.app.tm.prepare(ttid, 1, oid_list, uuid_list,
+        tid = self.app.tm.prepare(ttid, 1, [oid1, oid2], uuid_list,
             msg_id)
         self.assertTrue(ttid in self.app.tm)
         # the first storage acknowledge the lock
-        self.service.answerInformationLocked(storage_conn_1, ttid)
+        self.service.answerInformationLocked(storage_conn_1, ttid, {oid1: base_tid})
         self.checkNoPacketSent(client_conn_1)
         self.checkNoPacketSent(client_conn_2)
         self.checkNoPacketSent(storage_conn_1)
         self.checkNoPacketSent(storage_conn_2)
         # then the second
-        self.service.answerInformationLocked(storage_conn_2, ttid)
+        self.service.answerInformationLocked(storage_conn_2, ttid, {oid2: base_tid})
         self.checkAnswerTransactionFinished(client_conn_1)
         self.checkInvalidateObjects(client_conn_2)
         self.checkNotifyUnlockInformation(storage_conn_1)

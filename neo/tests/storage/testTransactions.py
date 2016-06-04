@@ -52,10 +52,10 @@ class TransactionTests(NeoUnitTestBase):
         object2 = oid2, "1" * 20, None
         self.assertEqual(txn.getObjectList(), [])
         self.assertEqual(txn.getOIDList(), [])
-        txn.addObject(*object1)
+        txn.addObject(*object1 + (None, ))
         self.assertEqual(txn.getObjectList(), [object1])
         self.assertEqual(txn.getOIDList(), [oid1])
-        txn.addObject(*object2)
+        txn.addObject(*object2 + (None, ))
         self.assertEqual(txn.getObjectList(), [object1, object2])
         self.assertEqual(txn.getOIDList(), [oid1, oid2])
 
@@ -64,7 +64,7 @@ class TransactionTests(NeoUnitTestBase):
         oid_2 = self.getOID(2)
         txn = Transaction(self.getClientUUID(), self.getNextTID())
         object_info = oid_1, None, None
-        txn.addObject(*object_info)
+        txn.addObject(*object_info + (None, ))
         self.assertRaises(KeyError, txn.getObject, oid_2)
         self.assertEqual(txn.getObject(oid_1), object_info)
 

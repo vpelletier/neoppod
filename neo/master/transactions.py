@@ -30,7 +30,7 @@ class Transaction(object):
     """
     _tid = None
     _msg_id = None
-    _oid_list = None
+    _oid_dict = None
     _prepared = False
     # uuid dict hold flag to known who has locked the transaction
     _uuid_set = None
@@ -51,7 +51,7 @@ class Transaction(object):
                 self.__class__.__name__,
                 self._node,
                 dump(self._tid),
-                map(dump, self._oid_list or ()),
+                {dump(x): dump(y) for x, y in (self._oid_dict or {}).iteritems()},
                 map(uuid_str, self._uuid_set or ()),
                 time() - self._birth,
                 id(self),
@@ -87,12 +87,11 @@ class Transaction(object):
         """
         return list(self._uuid_set)
 
-    def getOIDList(self):
+    def getOIDDict(self):
         """
-            Returns the list of OIDs used in the transaction
+            Returns the dict of base TID for each OID used in the transaction
         """
-
-        return list(self._oid_list)
+        return dict(self._oid_dict)
 
     def isPrepared(self):
         """
@@ -116,7 +115,7 @@ class Transaction(object):
     def prepare(self, tid, oid_list, uuid_list, msg_id):
 
         self._tid = tid
-        self._oid_list = oid_list
+        self._oid_dict = dict.fromkeys(oid_list)
         self._msg_id = msg_id
         self._uuid_set = set(uuid_list)
         self._lock_wait_uuid_set = set(uuid_list)
@@ -148,12 +147,20 @@ class Transaction(object):
             self._notification_set.discard(node.getUUID())
         return False
 
-    def lock(self, uuid):
+    def lock(self, uuid, oid_base_tid_dict):
         """
             Define that a node has locked the transaction
             Returns true if all nodes are locked
         """
         self._lock_wait_uuid_set.remove(uuid)
+        for oid, tid in oid_base_tid_dict.iteritems():
+            # XXX: We should ignore base_tid from outdated partitions, as they
+            # may not have the immediate older revision.
+            if tid is not None:
+                assert self._oid_dict[oid] in (None, tid), (
+                    dump(oid), dump(tid), dump(self._oid_dict[oid]),
+                )
+                self._oid_dict[oid] = tid
         return self.locked()
 
     def locked(self):
@@ -330,14 +337,14 @@ class TransactionManager(object):
                                 % dump(ttid))
         del self[ttid]
 
-    def lock(self, ttid, uuid):
+    def lock(self, ttid, uuid, oid_base_tid_dict):
         """
             Set that a node has locked the transaction.
             If transaction is completely locked, calls function given at
             instanciation time.
         """
         logging.debug('Lock TXN %s for %s', dump(ttid), uuid_str(uuid))
-        if self[ttid].lock(uuid) and self._queue[0] == ttid:
+        if self[ttid].lock(uuid, oid_base_tid_dict) and self._queue[0] == ttid:
             # all storage are locked and we unlock the commit queue
             self._unlockPending()
 

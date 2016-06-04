@@ -38,20 +38,25 @@ class testTransactionManager(NeoUnitTestBase):
     def testTransaction(self):
         # test data
         node = Mock({'__repr__': 'Node'})
-        tid = self.makeTID(1)
+        base_tid1 = self.makeTID(1)
+        base_tid2 = self.makeTID(2)
+        tid = self.makeTID(3)
         ttid = self.makeTID(2)
-        oid_list = (oid1, oid2) = [self.makeOID(1), self.makeOID(2)]
+        oid1 = self.makeOID(1)
+        oid2 = self.makeOID(2)
         uuid_list = (uuid1, uuid2) = [self.getStorageUUID(),
                                       self.getStorageUUID()]
         msg_id = 1
         # create transaction object
         txn = Transaction(node, ttid)
-        txn.prepare(tid, oid_list, uuid_list, msg_id)
+        txn.prepare(tid, (oid1, oid2), uuid_list, msg_id)
         self.assertEqual(txn.getUUIDList(), uuid_list)
-        self.assertEqual(txn.getOIDList(), oid_list)
+        self.assertEqual(txn.getOIDDict(), {oid1: None, oid2: None})
         # lock nodes one by one
-        self.assertFalse(txn.lock(uuid1))
-        self.assertTrue(txn.lock(uuid2))
+        self.assertFalse(txn.lock(uuid1, {oid1: base_tid1}))
+        self.assertEqual(txn.getOIDDict(), {oid1: base_tid1, oid2: None})
+        self.assertTrue(txn.lock(uuid2, {oid1: base_tid1, oid2: base_tid2}))
+        self.assertEqual(txn.getOIDDict(), {oid1: base_tid1, oid2: base_tid2})
         # check that repr() works
         repr(txn)
 
@@ -59,7 +64,9 @@ class testTransactionManager(NeoUnitTestBase):
         # test data
         node = Mock({'__hash__': 1})
         msg_id = 1
-        oid_list = (oid1, oid2) = self.makeOID(1), self.makeOID(2)
+        base_tid = self.makeTID(1)
+        oid1 = self.makeOID(1)
+        oid2 = self.makeOID(2)
         uuid_list = uuid1, uuid2 = self.getStorageUUID(), self.getStorageUUID()
         client_uuid = self.getClientUUID()
         # create transaction manager
@@ -73,17 +80,17 @@ class testTransactionManager(NeoUnitTestBase):
         self.assertEqual(len(txnman.registerForNotification(uuid1)), 1)
         self.assertTrue(txnman.hasPending())
         # prepare the transaction
-        tid = txnman.prepare(ttid, 1, oid_list, uuid_list, msg_id)
+        tid = txnman.prepare(ttid, 1, (oid1, oid2), uuid_list, msg_id)
         self.assertTrue(txnman.hasPending())
         self.assertEqual(txnman.registerForNotification(uuid1), [ttid])
         txn = txnman[ttid]
         self.assertEqual(txn.getTID(), tid)
         self.assertEqual(txn.getUUIDList(), list(uuid_list))
-        self.assertEqual(txn.getOIDList(), list(oid_list))
+        self.assertEqual(txn.getOIDDict(), {oid1: None, oid2: None})
         # lock nodes
-        txnman.lock(ttid, uuid1)
+        txnman.lock(ttid, uuid1, {oid1: base_tid})
         self.assertEqual(len(callback.getNamedCalls('__call__')), 0)
-        txnman.lock(ttid, uuid2)
+        txnman.lock(ttid, uuid2, {oid2: base_tid})
         self.assertEqual(len(callback.getNamedCalls('__call__')), 1)
         self.assertEqual(txnman.registerForNotification(uuid1), [])
 
@@ -93,7 +100,9 @@ class testTransactionManager(NeoUnitTestBase):
         client3 = Mock({'__hash__': 3})
         storage_1_uuid = self.getStorageUUID()
         storage_2_uuid = self.getStorageUUID()
-        oid_list = [self.makeOID(1), ]
+        base_tid = self.makeTID(1)
+        oid = self.makeOID(1)
+        oid_list = [oid]
 
         tm = TransactionManager(lambda tid, txn: None)
         # Transaction 1: 2 storage nodes involved, one will die and the other
@@ -102,7 +111,7 @@ class testTransactionManager(NeoUnitTestBase):
         ttid1 = tm.begin(client1)
         tid1 = tm.prepare(ttid1, 1, oid_list,
             [storage_1_uuid, storage_2_uuid], msg_id_1)
-        tm.lock(ttid1, storage_2_uuid)
+        tm.lock(ttid1, storage_2_uuid, {oid: base_tid})
         t1 = tm[ttid1]
         self.assertFalse(t1.locked())
         # Storage 1 dies:
@@ -122,7 +131,7 @@ class testTransactionManager(NeoUnitTestBase):
         # t2 still waits for storage 2
         self.assertFalse(t2.storageLost(storage_1_uuid))
         self.assertEqual(t2.getUUIDList(), [storage_2_uuid])
-        self.assertTrue(t2.lock(storage_2_uuid))
+        self.assertTrue(t2.lock(storage_2_uuid, {oid: base_tid}))
         del tm[ttid2]
 
         # Transaction 3: 1 storage node involved, which won't die
@@ -136,7 +145,7 @@ class testTransactionManager(NeoUnitTestBase):
         # t3 doesn't care
         self.assertFalse(t3.storageLost(storage_1_uuid))
         self.assertEqual(t3.getUUIDList(), [storage_2_uuid])
-        self.assertTrue(t3.lock(storage_2_uuid))
+        self.assertTrue(t3.lock(storage_2_uuid, {oid: base_tid}))
         del tm[ttid3]
 
     def testTIDUtils(self):
@@ -206,10 +215,10 @@ class testTransactionManager(NeoUnitTestBase):
         ttid2 = tm.begin(node2)
         tid1 = tm.prepare(ttid1, 1, [], [storage_uuid], 0)
         tid2 = tm.prepare(ttid2, 1, [], [storage_uuid], 0)
-        tm.lock(ttid2, storage_uuid)
+        tm.lock(ttid2, storage_uuid, {})
         # txn 2 is still blocked by txn 1
         self.assertEqual(len(callback.getNamedCalls('__call__')), 0)
-        tm.lock(ttid1, storage_uuid)
+        tm.lock(ttid1, storage_uuid, {})
         # both transactions are unlocked when txn 1 is fully locked
         self.assertEqual(len(callback.getNamedCalls('__call__')), 2)
 

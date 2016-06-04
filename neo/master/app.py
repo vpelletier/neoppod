@@ -518,7 +518,7 @@ class Application(BaseApplication):
         ttid = txn.getTTID()
         tid = txn.getTID()
         transaction_node = txn.getNode()
-        invalidate_objects = Packets.InvalidateObjects(tid, txn.getOIDList())
+        invalidate_objects = Packets.InvalidateObjects(tid, txn.getOIDDict())
         for client_node in self.nm.getClientList(only_identified=True):
             c = client_node.getConnection()
             if client_node is transaction_node:
