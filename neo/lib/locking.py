@@ -157,15 +157,36 @@ class VerboseSemaphore(VerboseLockBase):
     def _locked(self):
         return not self.lock._Semaphore__value
 
+# XXX: threading.Event is a function instanciating threading._Event.. WTF ?
+threading_Event = threading.Event().__class__
+
+class VerboseEvent(threading_Event):
+
+    def __init__(self, *args, **kw):
+        self.waiting = []
+        self.creator = LockUser(repr(self) + " created")
+        super(VerboseEvent, self).__init__(*args, **kw)
+
+    def wait(self, timeout=None):
+        me = LockUser("%r.wait(%s). Creator: %r. Waiting: %r"
+                      % (self, timeout, self.creator, self.waiting))
+        self.waiting.append(me)
+        try:
+            return super(VerboseEvent, self).wait(timeout)
+        finally:
+            self.waiting.remove(me)
+
 
 if VERBOSE_LOCKING:
     Lock = VerboseLock
     RLock = VerboseRLock
     Semaphore = VerboseSemaphore
+    Event = VerboseEvent
 else:
     Lock = threading.Lock
     RLock = threading.RLock
     Semaphore = threading.Semaphore
+    Event = threading.Event
 
 
 class SimpleQueue(object):

@@ -23,7 +23,15 @@ from . import AnswerBaseHandler
 from ..exception import NEOStorageError
 
 
-class PrimaryBootstrapHandler(AnswerBaseHandler):
+class PrimaryAnswerBaseHandler(AnswerBaseHandler):
+    def answerLastTransaction(self, conn, ltid):
+        app = self.app
+        if app.last_tid != ltid:
+            if app.master_conn is None:
+                app.recoverFromMissedInvalidations(ltid)
+            app.last_tid = ltid
+
+class PrimaryBootstrapHandler(PrimaryAnswerBaseHandler):
     """ Bootstrap handler used when looking for the primary master """
 
     def notReady(self, conn, message):
@@ -88,23 +96,8 @@ class PrimaryBootstrapHandler(AnswerBaseHandler):
     def answerNodeInformation(self, conn):
         pass
 
-    def answerLastTransaction(self, conn, ltid):
-        pass
-
 class PrimaryNotificationsHandler(MTEventHandler):
     """ Handler that process the notifications from the primary master """
-
-    def packetReceived(self, conn, packet, kw={}):
-        if type(packet) is Packets.AnswerLastTransaction:
-            app = self.app
-            ltid = packet.decode()[0]
-            if app.last_tid != ltid:
-                if app.master_conn is None:
-                    app.recoverFromMissedInvalidations(ltid)
-                app.last_tid = ltid
-        elif type(packet) is Packets.AnswerTransactionFinished:
-            self.app.updateCacheOnFinish(tid, **kw)
-        MTEventHandler.packetReceived(self, conn, packet, kw)
 
     def connectionClosed(self, conn):
         app = self.app
@@ -138,7 +131,7 @@ class PrimaryNotificationsHandler(MTEventHandler):
                 if node and node.isConnected():
                     node.getConnection().close()
 
-class PrimaryAnswersHandler(AnswerBaseHandler):
+class PrimaryAnswersHandler(PrimaryAnswerBaseHandler):
     """ Handle that process expected packets from the primary master """
 
     def answerBeginTransaction(self, conn, ttid):
@@ -154,9 +147,6 @@ class PrimaryAnswersHandler(AnswerBaseHandler):
     def answerPack(self, conn, status):
         if not status:
             raise NEOStorageError('Already packing')
-
-    def answerLastTransaction(self, conn, ltid):
-        pass
 
     def answerFinalTID(self, conn, tid):
         self.app.setHandlerData(tid)

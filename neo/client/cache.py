@@ -16,6 +16,15 @@
 
 import math
 from bisect import insort
+from neo.lib.locking import Event
+from neo.lib.util import dump
+
+class StoreIntent(object):
+    next_tid = None
+    item = None
+    result = None
+    def __init__(self):
+        self.event = Event()
 
 class CacheItem(object):
 
@@ -64,13 +73,15 @@ class ClientCache(object):
     """
 
     __slots__ = ('_life_time', '_max_history_size', '_max_size',
-                 '_queue_list', '_oid_dict', '_time', '_size', '_history_size')
+                 '_queue_list', '_oid_dict', '_time', '_size', '_history_size',
+                 '_store_intent_dict')
 
     def __init__(self, life_time=10000, max_history_size=100000,
                                         max_size=20*1024*1024):
         self._life_time = life_time
         self._max_history_size = max_history_size
         self._max_size = max_size
+        self._store_intent_dict = {}
         self.clear()
 
     def clear(self):
@@ -190,14 +201,48 @@ class ClientCache(object):
                 if not item.next_tid:
                     return item
 
-    def load(self, oid, tid, before):
+    def load(self, oid, tid, before, onMiss):
         """Return a revision of oid that was current before given tid"""
         item = self._load(oid, tid, before)
-        if item:
-            data = item.data
-            if data is not None:
-                self._fetched(item)
-                return data, item.tid, item.next_tid
+        while item is None:
+            # This loop is useful for the event.wait() branch: when the
+            # concurrent load() call in the onMiss raises, one of the ones in
+            # event.wait will retry the load.
+            # XXX: maybe reuse the exception from another thread ? this does
+            # not seem a very good idea, and for an unlikely scenario anyway (
+            # should only happen when loading an object which does not exist,
+            # typically database root on first start)
+            key = (oid, tid, before)
+            my_intent = StoreIntent()
+            store_intent = self._store_intent_dict.setdefault(key, my_intent)
+            if store_intent is my_intent:
+                try:
+                    data, tid, next_tid = onMiss()
+                    if store_intent.next_tid is not None:
+                        # Concurrent invalidation received...
+                        if next_tid is None:
+                            # ...and received data needs fixing.
+                            next_tid = store_intent.next_tid
+                        else:
+                            assert next_tid == store_intent.next_tid, (
+                                dump(oid), dump(next_tid), dump(store_intent.next_tid))
+                    store_intent.result = data, tid, next_tid
+                    store_intent.item = self.store(oid, data, tid, next_tid)
+                finally:
+                    store_intent.event.set()
+                    del self._store_intent_dict[key]
+            else:
+                store_intent.event.wait()
+            if store_intent.result is not None:
+                item = store_intent.item
+                if item is None:
+                    # Response was received, but item did not fit in cache. There
+                    # is nothing left to dohere, return it.
+                    return store_intent.result
+        data = item.data
+        if data is not None:
+            self._fetched(item)
+            return data, item.tid, item.next_tid
 
     def store(self, oid, data, tid, next_tid):
         """Store a new data record in the cache"""
@@ -211,11 +256,13 @@ class ClientCache(object):
                 # app.last_tid (and the cache should be empty when app.last_tid
                 # is still None).
                 if item.level: # already stored
-                    assert item.next_tid == next_tid and item.data == data
+                    assert (next_tid is None or item.next_tid == next_tid
+                        ) and item.data == data
                     return
                 assert not item.data
-                # Possible case of late invalidation.
-                item.next_tid = next_tid
+                if next_tid is not None:
+                    # Possible case of late invalidation.
+                    item.next_tid = next_tid
             else:
                 item = CacheItem()
                 item.oid = oid
@@ -257,22 +304,25 @@ class ClientCache(object):
                         if self._size <= max_size:
                             return
                         head = next
+            return item
 
-    def invalidate(self, oid, tid, base_tid):
-        """Mark data record as being valid only up to given tid"""
-        try:
-            item = self._oid_dict[oid][-1]
-        except KeyError:
-            pass
-        else:
-            if item.next_tid is None:
-                assert base_tid == item.tid, (
-                    base_tid,
-                    item.tid,
-                )
-                item.next_tid = tid
-            else:
-                assert item.next_tid <= tid, (item, oid, tid)
+    def invalidate(self, tid, base_tid_dict):
+        """Mark data records as being valid only up to given tid"""
+        for oid, base_tid in base_tid_dict.iteritems():
+            item = self._load(oid, base_tid, False)
+            if item is not None:
+                if item.next_tid is None:
+                    item.next_tid = tid
+                else:
+                    assert item.next_tid == tid, (item, oid, tid)
+        # Note: _store_intent_dict should be extremely small (one per concurrent
+        # load), so a systematic search should be less expensive than
+        # maintaining a per-oid index of load intents.
+        for (intent_oid, intent_tid, before), intent in self._store_intent_dict.iteritems():
+            if intent_oid in base_tid_dict and intent.next_tid is None and (
+                        intent_tid < tid or (before and intent_tid == tid)
+                    ):
+                intent.next_tid = tid
 
     def clear_current(self):
         for oid, item_list in self._oid_dict.items():
@@ -308,7 +358,7 @@ def test(self):
     cache.clear_current()
     self.assertEqual(cache.load(1, None, False), None)
     cache.store(1, *data)
-    cache.invalidate(1, 20, 15)
+    cache.invalidate(20, {1: 15})
     cache.clear_current()
     self.assertEqual(cache.load(1, 20, True), ('15', 15, 20))
     cache.store(1, '10', 10, 15)
@@ -328,6 +378,7 @@ def test(self):
     self.assertEqual(1, cache._history_size)
     cache.clear_current()
     self.assertEqual(0, cache._history_size)
+    # TODO: test cncurrent loads (needs threads)
 
 if __name__ == '__main__':
     import unittest

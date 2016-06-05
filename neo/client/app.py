@@ -32,7 +32,7 @@ from neo.lib.protocol import NodeTypes, Packets, \
     INVALID_PARTITION, MAX_TID, ZERO_HASH, ZERO_TID
 from neo.lib.event import EventManager
 from neo.lib.util import makeChecksum, dump
-from neo.lib.locking import Empty, Lock, SimpleQueue
+from neo.lib.locking import Empty, Lock, RLock, SimpleQueue
 from neo.lib.connection import MTClientConnection, ConnectionClosed
 from neo.lib.node import NodeManager
 from .exception import NEOStorageError, NEOStorageCreationUndoneError
@@ -105,7 +105,6 @@ class Application(ThreadedApplication):
 
         # no self-assigned UUID, primary master will supply us one
         self._cache = ClientCache()
-        self._loading_oid = None
         self.new_oid_list = ()
         self.last_oid = '\0' * 8
         self.last_tid = None
@@ -117,19 +116,26 @@ class Application(ThreadedApplication):
         self.notifications_handler = master.PrimaryNotificationsHandler( self)
         self._txn_container = TransactionContainer()
         # Lock definition :
-        # _load_lock is used to make loading and storing atomic
-        self._load_lock = Lock()
         # _oid_lock is used in order to not call multiple oid
         # generation at the same time
         lock = Lock()
         self._oid_lock_acquire = lock.acquire
         self._oid_lock_release = lock.release
-        # _cache_lock is used for the client cache
-        self._cache_lock = Lock()
+        # _cache_lock avoids race conditions in:
+        # - store vs. any
+        # - clear vs. any
+        # - load vs. any because load calls store on miss
+        # - invalidate vs. load because of load intent handling
+        # - load vs. load as multiqueue modifies cache on read access
+        self._cache_lock = RLock()
         # _connecting_to_master_node is used to prevent simultaneous master
         # node connection attemps
         self._connecting_to_master_node = Lock()
         self.compress = compress
+        # _invalidation_lock is used to serialise invalidations
+        # master-notificed invalidations are already serialised, but tpc_finish
+        # is also an invalidation source.
+        self._invalidation_lock = Lock()
 
     def __getattr__(self, attr):
         if attr == 'pt':
@@ -334,25 +340,14 @@ class Application(ThreadedApplication):
             # Do not get something more recent than the last invalidation
             # we got from master.
             before_tid = p64(u64(self.last_tid) + 1)
-        # XXX: Consider using a more fine-grained lock.
-        with self._load_lock:
-            with self._cache_lock:
-                result = self._cache.load(oid, tid or before_tid, bool(before_tid))
-                if result:
-                    return result
-                self._loading_oid = oid
-            data, tid, next_tid, _ = self._loadFromStorage(oid, tid, before_tid)
-            with self._cache_lock:
-                if self._loading_oid:
-                    # Common case (no race condition).
-                    self._cache.store(oid, data, tid, next_tid)
-                elif self._loading_invalidated:
-                    # oid has just been invalidated.
-                    if not next_tid:
-                        next_tid = self._loading_invalidated
-                    self._cache.store(oid, data, tid, next_tid)
-                # Else, we just reconnected to the master.
-        return data, tid, next_tid
+        def onMiss():
+            self._cache_lock.release()
+            try:
+                return self._loadFromStorage(oid, tid, before_tid)[:3]
+            finally:
+                self._cache_lock.acquire()
+        with self._cache_lock:
+            return self._cache.load(oid, tid or before_tid, bool(before_tid), onMiss)
 
     def _loadFromStorage(self, oid, at_tid, before_tid):
         packet = Packets.AskObject(oid, at_tid, before_tid)
@@ -688,7 +683,10 @@ class Application(ThreadedApplication):
             del cache_dict[oid]
         ttid = txn_context['ttid']
         p = Packets.AskFinishTransaction(ttid, cache_dict, checked_list)
-        with self._load_lock:
+        object_base_serial_dict = txn_context['object_base_serial_dict']
+        base_tid_dict = {oid: object_base_serial_dict[oid] for oid in cache_dict}
+        cache = self._cache
+        with self._invalidation_lock:
             try:
                 tid = self._askPrimary(p)
                 assert tid
@@ -696,20 +694,14 @@ class Application(ThreadedApplication):
                 tid = self._getFinalTID(ttid)
                 if not tid:
                     raise
+            self.last_tid = tid
+            with self._cache_lock:
+                cache.invalidate(tid, base_tid_dict)
+                for oid, data in cache_dict.iteritems():
+                    if data is not None:
+                        cache.store(oid, data, tid, None)
+                callback(tid)
             return tid
-
-    def updateCacheOnFinish(self, tid, callback, object_base_serial_dict, cache_dict):
-        self.last_tid = tid
-        # Update cache
-        cache = self._cache
-        with self._cache_lock:
-            for oid, data in cache_dict.iteritems():
-                # Update ex-latest value in cache
-                cache.invalidate(oid, tid, object_base_serial_dict[oid])
-                if data is not None:
-                    # Store in cache with no next_tid
-                    cache.store(oid, data, tid, None)
-            callback(tid)
 
     def _getFinalTID(self, ttid):
         try:
@@ -1001,9 +993,6 @@ class Application(ThreadedApplication):
                 # The DB was truncated. It happens so
                 # rarely that we don't need to optimize.
                 self._cache.clear()
-            # Make sure a parallel load won't refill the cache
-            # with garbage.
-            app._loading_oid = app._loading_invalidated = None
         db = self.getDB()
         if db is not None:
             db.invalidateCache()
@@ -1014,13 +1003,7 @@ class Application(ThreadedApplication):
     def invalidateObjects(self, tid, base_tid_dict):
         db = self.getDB()
         self.last_tid = tid
-        with self._cache_lock:
-            invalidate = self._cache.invalidate
-            loading = self._loading_oid
-            for oid, base_tid in oid_dict.iteritems():
-                invalidate(oid, tid, base_tid)
-                if oid == loading:
-                    self._loading_oid = None
-                    self._loading_invalidated = tid
+        with self._invalidation_lock, self._cache_lock:
+            self._cache.invalidate(tid, base_tid_dict)
             if db is not None:
                 db.invalidate(tid, base_tid_dict.keys())
