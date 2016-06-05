@@ -679,17 +679,16 @@ class Application(ThreadedApplication):
         txn_container = self._txn_container
         if 'voted' not in txn_container.get(transaction):
             self.tpc_vote(transaction, tryToResolveConflict)
-        checked_list = []
+        # Call finish on master
+        txn_context = txn_container.pop(transaction)
+        cache_dict = txn_context['cache_dict']
+        checked_list = [oid for oid, data  in cache_dict.iteritems()
+                            if data is CHECKED_SERIAL]
+        for oid in checked_list:
+            del cache_dict[oid]
+        ttid = txn_context['ttid']
+        p = Packets.AskFinishTransaction(ttid, cache_dict, checked_list)
         with self._load_lock:
-            # Call finish on master
-            txn_context = txn_container.pop(transaction)
-            cache_dict = txn_context['cache_dict']
-            checked_list = [oid for oid, data  in cache_dict.iteritems()
-                                if data is CHECKED_SERIAL]
-            for oid in checked_list:
-                del cache_dict[oid]
-            ttid = txn_context['ttid']
-            p = Packets.AskFinishTransaction(ttid, cache_dict, checked_list)
             try:
                 tid = self._askPrimary(p)
                 assert tid
