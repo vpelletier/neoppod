@@ -16,6 +16,7 @@
 
 from functools import wraps
 from time import time
+from collections import deque
 
 from . import attributeTracker, logging
 from .connector import ConnectorException, ConnectorDelayedConnection
@@ -31,10 +32,7 @@ class ConnectionClosed(Exception):
 
 class HandlerSwitcher(object):
     _is_handling = False
-    _next_timeout = None
-    _next_timeout_msg_id = None
-    _next_on_timeout = None
-    _pending = ({}, None),
+    _pending = ((), None),
 
     def __init__(self, handler):
         # pending handlers and related requests
@@ -73,32 +71,42 @@ class HandlerSwitcher(object):
         if self._is_handling:
             # If this is called while handling a packet, the response is to
             # be excpected for the current handler...
-            (request_dict, _) = _pending[0]
+            (request_queue, _) = _pending[0]
         else:
             # ...otherwise, queue for the latest handler
             assert len(_pending) == 1 or _pending[0][0]
-            (request_dict, _) = _pending[-1]
+            (request_queue, _) = _pending[-1]
         msg_id = request.getId()
         answer_class = request.getAnswerClass()
         assert answer_class is not None, "Not a request"
-        assert msg_id not in request_dict, "Packet id already expected"
-        next_timeout = self._next_timeout
-        if next_timeout is None or timeout < next_timeout:
-            self._next_timeout = timeout
-            self._next_timeout_msg_id = msg_id
-            self._next_on_timeout = on_timeout
-        request_dict[msg_id] = answer_class, timeout, on_timeout, kw
+        entry = (msg_id, answer_class, timeout, on_timeout, kw)
+        if not request_queue or request_queue[-1][2] <= timeout:
+            request_queue.append(entry)
+        elif timeout <= request_queue[0][2]:
+            request_queue.appendleft(entry)
+        else:
+            # Must insert (can be expensive !)
+            # XXX: guess from which end to start ? starting from rightmost
+            for count in xrange(len(request_queue)):
+                request_queue.rotate(1)
+                if request_queue[-1][2] <= timeout:
+                    request_queue.append(entry)
+                    request_queue.rotate(-count - 1)
+                    break
 
     def getNextTimeout(self):
-        return self._next_timeout
+        message_queue = self._pending[0][0]
+        if message_queue:
+            return message_queue[0][2]
 
     def timeout(self, connection):
-        msg_id = self._next_timeout_msg_id
-        if self._next_on_timeout is not None:
-            self._next_on_timeout(connection, msg_id)
-            if self._next_timeout_msg_id != msg_id:
-                # on_timeout sent a packet with a smaller timeout
-                # so keep the connection open
+        message_queue = self._pending[0][0]
+        msg_id, _, _, on_timeout, _ = message_queue[0]
+        if on_timeout is not None:
+            message_queue_len = len(message_queue)
+            on_timeout(connection, msg_id)
+            if len(message_queue) > message_queue_len:
+                # on_timeout sent a packet, keep the connection open
                 return
         # Notify that a timeout occured
         return msg_id
@@ -119,17 +127,25 @@ class HandlerSwitcher(object):
                 packet, connection)
             return
         msg_id = packet.getId()
-        (request_dict, handler) = self._pending[0]
+        (request_queue, handler) = self._pending[0]
         # notifications are not expected
         if not packet.isResponse():
             handler.packetReceived(connection, packet)
             return
         # checkout the expected answer class
-        try:
-            klass, _, _, kw = request_dict.pop(msg_id)
-        except KeyError:
-            klass = None
-            kw = {}
+        if request_queue and request_queue[0][0] == msg_id:
+            # Lucky shot (cheap and very likely to match)
+            _, klass, _, _, kw = request_queue.popleft()
+        else:
+            for counter in xrange(len(request_queue)):
+                request_queue.rotate(-1)
+                if request_queue[0][0] == msg_id:
+                    _, klass, _, _, kw = request_queue.popleft()
+                    request_queue.rotate(counter + 1)
+                    break
+            else:
+                klass = None
+                kw = {}
         if klass and isinstance(packet, klass) or packet.isError():
             handler.packetReceived(connection, packet, kw)
         else:
@@ -144,18 +160,6 @@ class HandlerSwitcher(object):
             del self._pending[0]
             logging.debug('Apply handler %r on %r', self._pending[0][1],
                     connection)
-        if msg_id == self._next_timeout_msg_id:
-            self._updateNextTimeout()
-
-    def _updateNextTimeout(self):
-        # Find next timeout and its msg_id
-        next_timeout = None
-        for pending in self._pending:
-            for msg_id, (_, timeout, on_timeout, _) in pending[0].iteritems():
-                if not next_timeout or timeout < next_timeout[0]:
-                    next_timeout = timeout, msg_id, on_timeout
-        self._next_timeout, self._next_timeout_msg_id, self._next_on_timeout = \
-            next_timeout or (None, None, None)
 
     def setHandler(self, handler):
         can_apply = len(self._pending) == 1 and not self._pending[0][0]
@@ -164,7 +168,7 @@ class HandlerSwitcher(object):
             self._pending[0][1] = handler
         else:
             # put the next handler in queue
-            self._pending.append([{}, handler])
+            self._pending.append([deque(), handler])
         return can_apply
 
 
