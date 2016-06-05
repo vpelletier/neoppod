@@ -18,6 +18,7 @@ from cPickle import dumps, loads
 from zlib import compress, decompress
 from random import shuffle
 import heapq
+import sys
 import time
 import weakref
 from functools import partial
@@ -691,9 +692,13 @@ class Application(ThreadedApplication):
                 tid = self._askPrimary(p)
                 assert tid
             except ConnectionClosed:
-                tid = self._getFinalTID(ttid)
-                if not tid:
-                    raise
+                e = sys.exc_info()
+                try:
+                    tid = self._getFinalTID(ttid)
+                    if not tid:
+                        raise e[0], e[1], e[2]
+                finally:
+                    del e
             self.last_tid = tid
             with self._cache_lock:
                 cache.invalidate(tid, base_tid_dict)
